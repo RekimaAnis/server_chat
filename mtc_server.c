@@ -3,21 +3,18 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <pthread.h>
+
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
 #include "utils.h"
 #include "protocol.h"
-#define MAX_CLIENT 4
+#include <signal.h>
 
 int init_sd(int myport);
-void do_service(int sd, int indice);
-struct client all_client[MAX_CLIENT];
-pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
-int count_client = 0;
+void do_service(int sd);
+
 static int verbose = 0;
 
 #define PRINT(...)                         \
@@ -27,34 +24,10 @@ static int verbose = 0;
     } while (0)
 
 
-void *body(void *args){
-
-    struct sockaddr_in c_add;
-    int base_sd, curr_sd;
-    socklen_t addrlen;
-    int myport;
-    int err = 0;
-    int indice = 0;
-    pthread_mutex_lock(&mutex1);
-    indice = count_client++;
-    pthread_mutex_unlock(&mutex1);
-    base_sd = (int) args;
-    //début mutex
-    // indice = count
-    // count++
-    //fin mutex
-    int opt;
-    while (!err) {
-        addrlen = sizeof(c_add);
-        curr_sd = accept(base_sd, CAST_ADDR(&c_add), &addrlen);
-        if (curr_sd < 0)
-            SYS_ERR("Accept failed!");
-
-        PRINT("Client connected\n");
-        do_service(curr_sd, indice);
-        close(curr_sd);  
-    }
-    close(base_sd);
+void sig_child(int signo){
+    pid_t pid;
+    while((pid = waitpid(-1, NULL, WNOHANG)) > 0)
+        printf("Proceess %d terminated\n", pid);
 }
 
 int main(int argc, char *argv[])
@@ -65,6 +38,9 @@ int main(int argc, char *argv[])
     int myport;
     int err = 0;
     int opt;
+    pid_t ch;
+    struct sigaction sa;
+
   
     if (argc < 2)
         USR_ERR("usage: server [-v] <port>");
@@ -80,10 +56,28 @@ int main(int argc, char *argv[])
   
     base_sd = init_sd(myport);
 
-    for ( int i =0 ; i < MAX_CLIENT ; i ++) {
-        pthread_create (&all_client[i].tid, 0 , body , ( void *) base_sd );
+    sa.sa_handler = sig_child;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGCHLD, &sa, NULL);
+
+    while (!err) {
+        addrlen = sizeof(c_add);
+        curr_sd = accept(base_sd, CAST_ADDR(&c_add), &addrlen);
+        if (curr_sd < 0)
+            SYS_ERR("Accept failed!");
+
+        PRINT("Client connected\n");
+        
+        ch = fork();
+        if(ch == 0){
+            do_service(curr_sd);
+            close(curr_sd);     
+            exit(0);
+        }
+        close(curr_sd);
     }
-    while(1);
+    close(base_sd);
 }
 
 
@@ -112,14 +106,13 @@ int init_sd(int myport)
     return sd;
 }
 
-void do_service(int sd, int indice)
+void do_service(int sd)
 {
     int i, l=1;
     char buffer[MSG_SIZE];
 
     struct message msg;
-    bzero(&msg, sizeof(msg)); // just to avoid writing uninitialized data in the socket
- 
+    bzero(&msg, sizeof(msg));
     // first read the pseudo
     int r = read(sd, buffer, PSEUDO_SIZE);
     if (r < 0) SYS_ERR("Error in reading from the socket");
@@ -128,8 +121,6 @@ void do_service(int sd, int indice)
     char mypseudo[PSEUDO_SIZE];
     strcpy(mypseudo, buffer);
     PRINT("Received pseudo %s\n", mypseudo);
-    strcpy(all_client[indice].pseudo, mypseudo);
-    all_client[indice].socket = sd;
         
     do {
         l = read(sd, &msg, sizeof(msg));
@@ -146,10 +137,7 @@ void do_service(int sd, int indice)
 
         strcpy(msg.pseudo, mypseudo);
         strcpy(msg.msg, buffer);
-        pthread_mutex_lock(&mutex2);
-        for(int i=0; i<MAX_CLIENT; i++){
-            write(all_client[i].socket, &msg, sizeof(msg));
-        }
-        pthread_mutex_unlock(&mutex2);
+        
+        write(sd, &msg, sizeof(msg));
     } while (1);
 }

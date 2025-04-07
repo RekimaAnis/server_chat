@@ -31,4 +31,3 @@ où `host_name` est l'adresse IPv4 du serveur. Si le client est lancé sur le m�
 Si tout fonctionne correctement, vous verrez sur l'écran l'image suivante :
 
 ![img](mtc_client.png)
-

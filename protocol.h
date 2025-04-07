@@ -8,9 +8,3 @@ struct message {
     char pseudo[PSEUDO_SIZE];
     char msg[MSG_SIZE];
 };
-
-struct client{
-    char pseudo[PSEUDO_SIZE];
-    int socket;
-    pthread_t tid;
-};
